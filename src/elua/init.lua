@@ -10,6 +10,43 @@ local Struct = {
     is_struct = true
 }
 Struct.__index = Struct
+local Instance = {}
+Instance.__index = Instance
+
+local function _dump_table(p, t, indent)
+    indent = indent or 0
+    local pf = ""
+    for i = 0, indent do
+        pf = pf.."   "
+    end
+    for k, v in pairs(t) do
+        if type(v) == "table" then
+            p(string.format("%s%s: {", pf, k))
+            _dump_table(p, v, indent + 1)
+            p(string.format("%s}", pf))
+        else
+            p(string.format("%s%s: %s", pf, k, v))
+        end
+    end
+end
+
+local function _match_table(t0, t1)
+    for k, v in pairs(t0) do
+        local v1 = t1[k]
+        if type(v) ~= type(v1) then
+            return false
+        end
+        local t = type(v)
+        if t == "table" then
+            if not _match_table(v, v1) then
+                return false
+            end
+        elseif v ~= v1 then
+            return false
+        end
+    end
+    return true
+end
 
 function elua.new_elua()
     local ret = {
@@ -86,6 +123,51 @@ local function _wrap_struct(ctx, s)
     return ret
 end
 
+local function _walk_struct(s, fn, ks)
+    ks = ks or {}
+    for i = 0, s:struct_count() - 1 do
+        local k = s:struct_get_key(i)
+        ks[#ks + 1] = k
+        local v = s:struct_get_value(i)
+        if v.is_enum then
+            fn(ks, v)
+        elseif v.is_struct then
+            _walk_struct(v, fn, ks)
+        end
+        ks[#ks] = nil
+    end
+end
+
+local function _expand_start_val(s, val)
+    if s.is_enum then
+        local i = s:k2i(val)
+        return s:enum_get_value(i)
+    elseif s.is_struct then
+        local ret = {}
+        pcall(function()
+            _walk_struct(s, function(ks, e)
+                local p = val
+                local prp = nil
+                local rp = ret
+                for _, v in ipairs(ks) do
+                    p = p[v]
+                    prp = rp
+                    local nrp = rp[v]
+                    if nrp == nil then
+                        nrp = {}
+                        rp[v] = nrp
+                    end
+                    rp = nrp
+                end
+                local i = e:k2i(p)
+                local v = e:enum_get_value(i)
+                prp[ks[#ks]] = v
+            end)
+        end)
+        return ret
+    end
+end
+
 -- Enums
 function Enum:enum_count()
     return self._c
@@ -136,6 +218,19 @@ function Struct:enum_get_value(i)
     return r
 end
 
+-- Instance
+function Instance:get_current_state_id()
+    return self.cur_state_id
+end
+
+function Instance:input(i)
+    print(string.format("Instance.input: %s", i))
+end
+
+function Instance:get_game()
+    return self.g
+end
+
 -- Elua
 function Elua:load_enum(n, e)
     self._e[n] = _wrap_enum(e)
@@ -160,24 +255,29 @@ function Elua:genenrate_states(n, fn)
         end
     end
     self._b = _wrap_enum(ne)
+    self._cs = n
     return self
 end
 
-local function _dump_table(p, t, indent)
-    indent = indent or 0
-    local pf = ""
-    for i = 0, indent do
-        pf = pf.."   "
-    end
-    for k, v in pairs(t) do
-        if type(v) == "table" then
-            p(string.format("%s%s: {", pf, k))
-            _dump_table(p, v, indent + 1)
-            p(string.format("%s}", pf))
-        else
-            p(string.format("%s%s: %s", pf, k, v))
+function Elua:start(start_val)
+    local ret = {}
+    ret.cur_state_id = 9527
+    local s = self._e[self._cs] or self._s[self._cs]
+    local exp = _expand_start_val(s, start_val)
+    for i = 0, self._b:enum_count() - 1 do
+        local v = self._b:enum_get_value(i)
+        if _match_table(v, exp) then
+            ret.cur_state_id = i
+            break
         end
     end
+    ret.g = self
+    setmetatable(ret, Instance)
+    return ret
+end
+
+function Elua:get_state_data(id)
+    return self._b:enum_get_value(id)
 end
 
 function Elua:dump(p)
