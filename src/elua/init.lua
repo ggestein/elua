@@ -23,11 +23,14 @@ end
 local function _wrap_enum(e)
     local ret = {}
     setmetatable(ret, Enum)
-    ret._t = e
     ret._i = {}
     local idx = 0
     for k, v in pairs(e) do
-        ret._i[idx] = k
+        ret._i[k] = idx
+        ret[idx] = {
+            _k = k,
+            _v = v
+        }
         idx = idx + 1
     end
     ret._c = idx
@@ -64,43 +67,73 @@ local function _wrap_struct(ctx, s)
     local ret = {}
     setmetatable(ret, Struct)
     ret._i = {}
-    ret._t = {}
     local idx = 0
     for k, v in pairs(s) do
-        ret._i[idx] = k
-        idx = idx + 1
+        ret._i[k] = idx
         local g
         if type(v) == "string" then
             g = _gen_getter_named(ctx, v)
         elseif type(v) == "table" then
             g = _gen_enum_getter_range(v)
         end
-        ret._t[k] = g
+        ret[idx] = {
+            _k = k,
+            _v = g
+        }
+        idx = idx + 1
     end
     ret._c = idx
     return ret
 end
 
 -- Enums
-function Enum:count()
+function Enum:enum_count()
     return self._c
 end
-function Enum:i2k(i)
-    return self._i[i]
+function Enum:k2i(k)
+    return self._i[k]
 end
-function Enum:get(k)
-    return self._t[k]
+function Enum:enum_get_key(i)
+    return self[i]._k
+end
+function Enum:enum_get_value(i)
+    return self[i]._v
 end
 
 -- Structs
-function Struct:count()
+function Struct:struct_count()
     return self._c
 end
-function Struct:i2k(i)
-    return self._i[i]
+function Struct:k2i(k)
+    return self._i[k]
 end
-function Struct:get(k)
-    return self._t[k]
+function Struct:struct_get_key(i)
+    return self[i]._k
+end
+function Struct:struct_get_value(i)
+    return self[i]._v()
+end
+function Struct:enum_count()
+    local p = 1
+    for i = 0, self:struct_count() - 1 do
+        local c = self:struct_get_value(i)
+        p = p * c:enum_count()
+    end
+    return p
+end
+function Struct:enum_get_value(i)
+    local r = {}
+    for idx = 0, self:struct_count() - 1 do
+        local v = self:struct_get_value(idx)
+        local k = self:struct_get_key(idx)
+        local m = v:enum_count()
+        if m > 0 then
+            local rmd = i % m
+            i = (i - rmd) / m
+            r[k] = v:enum_get_value(rmd)
+        end
+    end
+    return r
 end
 
 -- Elua
@@ -117,15 +150,32 @@ function Elua:load_struct(n, s)
     return self
 end
 
+local function _dump_table(p, t, indent)
+    indent = indent or 0
+    local pf = ""
+    for i = 0, indent do
+        pf = pf.."   "
+    end
+    for k, v in pairs(t) do
+        if type(v) == "table" then
+            p(string.format("%s%s: {", pf, k))
+            _dump_table(p, v, indent + 1)
+            p(string.format("%s}", pf))
+        else
+            p(string.format("%s%s: %s", pf, k, v))
+        end
+    end
+end
+
 function Elua:dump(p)
     p("******** ENUMS ********")
     for k, v in pairs(self._e) do
-        local c = v:count()
+        local c = v:enum_count()
         p(string.format("=== %s(%s) - %s ===", k, tostring(v), c))
         for i = 0, c - 1 do
-            local k = v:i2k(i)
-            p(string.format("[%s] %s", i, k))
-            local ct = v:get(k)
+            local ik = v:enum_get_key(i)
+            p(string.format("[%s] %s", i, ik))
+            local ct = v:enum_get_value(i)
             for k0, v0 in pairs(ct) do
                 p(string.format(" - %s = %s", k0, v0))
             end
@@ -133,13 +183,18 @@ function Elua:dump(p)
     end
     p("******** STRUCTS ********")
     for k, v in pairs(self._s) do
-        local c = v:count()
-        p(string.format("+++ %s(%s) - %s +++", k, tostring(v), c))
+        local c = v:struct_count()
+        local ec = v:enum_count()
+        p(string.format("+++ %s(%s) - %s - %s+++", k, tostring(v), c, ec))
         for i = 0, c - 1 do
-            local k = v:i2k(i)
-            local gf = v:get(k)
-            local g = gf()
+            local k = v:struct_get_key(i)
+            local g = v:struct_get_value(i)
             p(string.format("[%s] %s(%s%s): %s", i, k, g.is_enum and "E" or "", g.is_struct and "S" or "", tostring(g)))
+        end
+        for i = 0, ec - 1 do
+            local ev = v:enum_get_value(i)
+            p(">>>")
+            _dump_table(p, ev)
         end
     end
 end

@@ -17,6 +17,7 @@ e
     a = "te0",
     b = "ts0"
 })
+:dump(print)
 
 function love.update(dt)
 end
