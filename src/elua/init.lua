@@ -150,6 +150,19 @@ function Elua:load_struct(n, s)
     return self
 end
 
+function Elua:genenrate_states(n, fn)
+    local ne = {}
+    local core = self._e[n] or self._s[n]
+    for i = 0, core:enum_count() - 1 do
+        local v = core:enum_get_value(i)
+        if (not fn) or fn(v) then
+            ne[i] = v
+        end
+    end
+    self._b = _wrap_enum(ne)
+    return self
+end
+
 local function _dump_table(p, t, indent)
     indent = indent or 0
     local pf = ""
@@ -196,6 +209,14 @@ function Elua:dump(p)
             p(">>>")
             _dump_table(p, ev)
         end
+    end
+    p("******** BUILD ********")
+    local ec = self._b:enum_count()
+    p(string.format("TOTAL STATE COUNT: %s", ec))
+    for i = 0, ec - 1 do
+        local ev = self._b:enum_get_value(i)
+        p(">>>")
+        _dump_table(p, ev)
     end
 end
 

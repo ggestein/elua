@@ -17,6 +17,9 @@ e
     a = "te0",
     b = "ts0"
 })
+:genenrate_states("ts1", function(state)
+    return state.b.x.valid or state.a.valid
+end)
 :dump(print)
 
 function love.update(dt)
